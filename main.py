@@ -14,7 +14,7 @@ class XScraper:
     def __init__(self, username: str):
         self.username = username
         self.base_url = "https://api.twitter.com/graphql"
-        self.query_id = "8IS8MaO-2EN6GZZZb8jF0g"  # Updated query ID
+        self.query_id = "8IS8MaO-2EN6GZZZb8jF0g"
         self._refresh_headers()
 
     def _refresh_headers(self):
@@ -158,4 +158,73 @@ class XScraper:
             logger.error(f"Error parsing tweets: {e}")
             return []
 
-[Rest of the code remains the same...]
+def send_to_discord(webhook_url: str, tweets: list):
+    if not tweets:
+        logger.warning("No tweets to send")
+        return
+
+    for tweet in tweets:
+        embed = {
+            'title': 'Tweet Metrics',
+            'description': tweet['text'][:2000],
+            'fields': [
+                {'name': 'Retweets', 'value': str(tweet['metrics']['retweet_count']), 'inline': True},
+                {'name': 'Replies', 'value': str(tweet['metrics']['reply_count']), 'inline': True},
+                {'name': 'Likes', 'value': str(tweet['metrics']['like_count']), 'inline': True},
+                {'name': 'Views', 'value': str(tweet['metrics']['view_count']), 'inline': True},
+                {'name': 'Quotes', 'value': str(tweet['metrics']['quote_count']), 'inline': True}
+            ],
+            'timestamp': tweet['created_at']
+        }
+        
+        try:
+            response = requests.post(webhook_url, json={'embeds': [embed]})
+            if response.status_code == 204:
+                logger.info(f"Successfully sent metrics for tweet {tweet['id']}")
+            else:
+                logger.error(f"Failed to send to Discord. Status: {response.status_code}")
+        except Exception as e:
+            logger.error(f"Failed to send to Discord: {e}")
+
+def main():
+    username = os.getenv('X_USERNAME', 'Meteo_Kingdom')
+    webhook_url = os.getenv('DISCORD_WEBHOOK_URL')
+    
+    if not webhook_url:
+        logger.error("DISCORD_WEBHOOK_URL environment variable is required")
+        exit(1)
+    
+    scraper = XScraper(username)
+    
+    def job():
+        logger.info("Running scheduled metrics collection...")
+        tweets = scraper.get_tweets()
+        send_to_discord(webhook_url, tweets)
+        logger.info("Metrics collection completed")
+    
+    # Run immediately on startup
+    job()
+    
+    # Schedule every 15 minutes
+    schedule.every(15).minutes.do(job)
+    
+    app = Flask(__name__)
+    
+    @app.route('/')
+    def home():
+        return "X.com Metrics Scraper Running"
+    
+    # Run scheduler in background thread
+    def run_scheduler():
+        while True:
+            schedule.run_pending()
+            time.sleep(1)
+            
+    scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
+    scheduler_thread.start()
+    
+    # Run Flask app
+    app.run(host='0.0.0.0', port=int(os.getenv('PORT', 10000)))
+
+if __name__ == '__main__':
+    main()
