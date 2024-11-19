@@ -13,40 +13,56 @@ logger = logging.getLogger(__name__)
 class XScraper:
     def __init__(self, username: str):
         self.username = username
-        self.base_url = "https://twitter.com/i/api/graphql"
-        self.query_id = "k5XapwcSikNsEsILW5FvgA"
+        self.base_url = "https://api.twitter.com/graphql"
+        self.query_id = "8IS8MaO-2EN6GZZZb8jF0g"  # Updated query ID
         self._refresh_headers()
 
     def _refresh_headers(self):
+        guest_token = self._get_guest_token()
+        if not guest_token:
+            logger.error("Failed to get guest token")
+            return
+
         self.headers = {
             'authorization': 'Bearer AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs=1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA',
-            'x-guest-token': self._get_guest_token(),
+            'x-guest-token': guest_token,
             'x-twitter-client-language': 'en',
             'x-twitter-active-user': 'yes',
+            'x-csrf-token': 'missing',
             'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
             'accept': '*/*',
             'accept-language': 'en-US,en;q=0.9',
             'content-type': 'application/json',
+            'referer': f'https://twitter.com/{self.username}',
+            'origin': 'https://twitter.com'
         }
 
     def _get_guest_token(self):
         try:
             response = requests.post(
                 "https://api.twitter.com/1.1/guest/activate.json",
-                headers={"authorization": "Bearer AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs=1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA"}
+                headers={
+                    "authorization": "Bearer AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs=1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA"
+                }
             )
-            return response.json()['guest_token']
+            if response.status_code == 200:
+                return response.json()['guest_token']
+            logger.error(f"Failed to get guest token: {response.status_code}")
+            return None
         except Exception as e:
-            logger.error(f"Failed to get guest token: {e}")
+            logger.error(f"Error getting guest token: {e}")
             return None
 
     def get_tweets(self):
         try:
             variables = {
                 "screen_name": self.username,
-                "count": 20,
+                "count": 40,
+                "withHighlightedLabel": True,
+                "withTweetQuoteCount": True,
                 "includePromotedContent": False,
                 "withQuickPromoteEligibilityTweetFields": True,
+                "withBirdwatchNotes": False,
                 "withVoice": True,
                 "withV2Timeline": True
             }
@@ -63,21 +79,22 @@ class XScraper:
                 "graphql_is_translatable_rweb_tweet_is_translatable_enabled": True,
                 "view_counts_everywhere_api_enabled": True,
                 "longform_notetweets_consumption_enabled": True,
-                "responsive_web_twitter_article_notes_tab_enabled": True,
                 "tweet_awards_web_tipping_enabled": False,
                 "freedom_of_speech_not_reach_fetch_enabled": True,
                 "standardized_nudges_misinfo": True,
                 "tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled": False,
-                "longform_notetweets_rich_text_read_enabled": True,
-                "longform_notetweets_inline_media_enabled": True,
-                "responsive_web_enhance_cards_enabled": False,
+                "responsive_web_twitter_article_notes_tab_enabled": True,
+                "interactive_text_enabled": True,
                 "responsive_web_text_conversations_enabled": False,
+                "responsive_web_enhance_cards_enabled": False,
+                "responsive_web_media_download_video_enabled": False,
                 "highlights_tweets_tab_ui_enabled": True,
                 "creator_subscriptions_tweet_preview_api_enabled": True,
-                "hidden_profile_likes_enabled": True,
+                "responsive_web_graphql_skip_user_profile_image_extensions_webp_enabled": False,
+                "hidden_profile_likes_enabled": True, 
+                "hidden_profile_subscriptions_enabled": True,
                 "subscriptions_verification_info_verified_since_enabled": True,
-                "subscriptions_verification_info_is_identity_verified_enabled": True,
-                "hidden_profile_subscriptions_enabled": True
+                "subscriptions_verification_info_is_identity_verified_enabled": True
             }
             
             params = {
@@ -109,102 +126,36 @@ class XScraper:
     def _parse_tweets(self, data):
         tweets = []
         try:
-            entries = data['data']['user']['result']['timeline_v2']['timeline']['instructions'][1]['entries']
+            timeline = data['data']['user']['result']['timeline_v2']['timeline']
+            entries = timeline['instructions'][0]['entries']
             
             for entry in entries:
-                if entry['entryId'].startswith('tweet-'):
-                    try:
-                        result = entry['content']['itemContent']['tweet_results']['result']
-                        legacy = result['legacy']
-                        
-                        tweets.append({
-                            'id': result['rest_id'],
-                            'text': legacy['full_text'],
-                            'created_at': legacy['created_at'],
-                            'metrics': {
-                                'retweet_count': legacy['retweet_count'],
-                                'reply_count': legacy['reply_count'],
-                                'like_count': legacy['favorite_count'],
-                                'quote_count': legacy['quote_count'],
-                                'view_count': result.get('views', {}).get('count', 0)
-                            }
-                        })
-                    except Exception as e:
-                        logger.error(f"Error parsing tweet: {e}")
-                        continue
+                if not entry['entryId'].startswith('tweet-'):
+                    continue
+                    
+                try:
+                    result = entry['content']['itemContent']['tweet_results']['result']
+                    legacy = result['legacy']
+                    
+                    tweets.append({
+                        'id': result['rest_id'],
+                        'text': legacy['full_text'],
+                        'created_at': legacy['created_at'],
+                        'metrics': {
+                            'retweet_count': legacy['retweet_count'],
+                            'reply_count': legacy['reply_count'],
+                            'like_count': legacy['favorite_count'],
+                            'quote_count': legacy.get('quote_count', 0),
+                            'view_count': result.get('views', {}).get('count', 0)
+                        }
+                    })
+                except Exception as e:
+                    logger.error(f"Error parsing tweet: {e}")
+                    continue
                 
             return tweets
         except Exception as e:
             logger.error(f"Error parsing tweets: {e}")
             return []
 
-def send_to_discord(webhook_url: str, tweets: list):
-    if not tweets:
-        logger.warning("No tweets to send")
-        return
-
-    for tweet in tweets:
-        embed = {
-            'title': 'Tweet Metrics',
-            'description': tweet['text'][:2000],
-            'fields': [
-                {'name': 'Retweets', 'value': str(tweet['metrics']['retweet_count']), 'inline': True},
-                {'name': 'Replies', 'value': str(tweet['metrics']['reply_count']), 'inline': True},
-                {'name': 'Likes', 'value': str(tweet['metrics']['like_count']), 'inline': True},
-                {'name': 'Views', 'value': str(tweet['metrics']['view_count']), 'inline': True},
-                {'name': 'Quotes', 'value': str(tweet['metrics']['quote_count']), 'inline': True}
-            ],
-            'timestamp': tweet['created_at']
-        }
-        
-        try:
-            response = requests.post(webhook_url, json={'embeds': [embed]})
-            if response.status_code == 204:
-                logger.info(f"Successfully sent metrics for tweet {tweet['id']}")
-            else:
-                logger.error(f"Failed to send to Discord. Status: {response.status_code}")
-        except Exception as e:
-            logger.error(f"Failed to send to Discord: {e}")
-
-def main():
-    username = os.getenv('X_USERNAME', 'Meteo_Kingdom')
-    webhook_url = os.getenv('DISCORD_WEBHOOK_URL')
-    
-    if not webhook_url:
-        logger.error("DISCORD_WEBHOOK_URL environment variable is required")
-        exit(1)
-    
-    scraper = XScraper(username)
-    
-    def job():
-        logger.info("Running scheduled metrics collection...")
-        tweets = scraper.get_tweets()
-        send_to_discord(webhook_url, tweets)
-        logger.info("Metrics collection completed")
-    
-    # Run immediately on startup
-    job()
-    
-    # Schedule every 15 minutes
-    schedule.every(15).minutes.do(job)
-    
-    app = Flask(__name__)
-    
-    @app.route('/')
-    def home():
-        return "X.com Metrics Scraper Running"
-    
-    # Run scheduler in background thread
-    def run_scheduler():
-        while True:
-            schedule.run_pending()
-            time.sleep(1)
-            
-    scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
-    scheduler_thread.start()
-    
-    # Run Flask app
-    app.run(host='0.0.0.0', port=int(os.getenv('PORT', 10000)))
-
-if __name__ == '__main__':
-    main()
+[Rest of the code remains the same...]
