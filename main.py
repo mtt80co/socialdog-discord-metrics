@@ -1,10 +1,10 @@
 import os
+import requests
 import json
 import logging
 import threading
 import time
 from typing import List, Dict, Optional
-import requests
 import schedule
 from flask import Flask
 
@@ -44,9 +44,9 @@ class Scraper:
             response = requests.get('https://api.scrapfly.io/scrape', headers=headers, params=params)
 
             if response.status_code == 200:
-                data = response.json()
-                # Extract the necessary data from the response
-                return data
+                logger.info("Scraping successful!")
+                logger.debug(f"Scraper raw response: {response.text}")
+                return response.json()
             else:
                 logger.error(f"Scraping failed: {response.status_code} - {response.text}")
                 return None
@@ -60,10 +60,23 @@ class Scraper:
 
     def extract_posts(self, data: Dict) -> List[Dict]:
         """Extract individual posts from the scraped data."""
-        posts = []
-        # Implement the logic to parse the data and extract individual posts
-        # This will depend on the structure of the data returned by Scrapfly
-        return posts
+        try:
+            # Adjust based on actual response structure
+            posts = data.get('posts', [])
+            parsed_posts = []
+            for post in posts:
+                parsed_posts.append({
+                    'content': post.get('content', 'No content'),
+                    'impressions': post.get('impressions', 0),
+                    'interactions': post.get('interactions', 0),
+                    'followers': post.get('followers', 0),
+                    'profile_clicks': post.get('profile_clicks', 0),
+                })
+            logger.info(f"Extracted {len(parsed_posts)} posts.")
+            return parsed_posts
+        except KeyError as e:
+            logger.error(f"Error extracting posts: {e}")
+            return []
 
 def send_to_discord(posts: List[Dict]):
     """Send scraped posts to Discord webhook."""
@@ -75,11 +88,11 @@ def send_to_discord(posts: List[Dict]):
         try:
             message = {
                 'content': f"📄 New Post:\n"
-                           f"• Content: {post.get('content')}\n"
-                           f"• Impressions: {post.get('impressions')}\n"
-                           f"• Interactions: {post.get('interactions')}\n"
-                           f"• Followers: {post.get('followers')}\n"
-                           f"• Profile Clicks: {post.get('profile_clicks')}"
+                           f"• Content: {post['content']}\n"
+                           f"• Impressions: {post['impressions']}\n"
+                           f"• Interactions: {post['interactions']}\n"
+                           f"• Followers: {post['followers']}\n"
+                           f"• Profile Clicks: {post['profile_clicks']}"
             }
 
             logger.info("Sending post to Discord...")
@@ -110,23 +123,4 @@ def run_scheduler(scraper: Scraper):
     # Schedule job every hour
     schedule.every(1).hour.do(metrics_job, scraper=scraper)
 
-    while True:
-        schedule.run_pending()
-        time.sleep(60)
-
-if __name__ == '__main__':
-    scraper = Scraper(api_key=SCRAPFLY_API_KEY, profile_url=X_COM_PROFILE_URL)
-
-    # Start scheduler in a separate thread
-    scheduler_thread = threading.Thread(target=run_scheduler, args=(scraper,))
-    scheduler_thread.daemon = True
-    scheduler_thread.start()
-
-    # Start Flask web server to keep app alive
-    app = Flask(__name__)
-
-    @app.route('/')
-    def home():
-        return "X.com Metrics Scraper is running"
-
-    app.run(host='0.0.0.0', port=int(os.getenv('PORT', 10000)))
+    while True
