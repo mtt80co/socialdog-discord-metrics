@@ -119,17 +119,13 @@ def main():
         exit(1)
     
     scraper = XScraper(username)
+    app = Flask(__name__)
     
     def job():
         logger.info("Running scheduled metrics collection...")
         tweets = scraper.get_tweets()
         send_to_discord(webhook_url, tweets)
         logger.info("Metrics collection completed")
-    
-    # Run immediately on startup
-    job()
-    
-    app = Flask(__name__)
     
     @app.route('/')
     def home():
@@ -139,12 +135,16 @@ def main():
     def health():
         return "OK", 200
     
+    # Run job immediately
+    job()
+    
     # Run scheduler in background thread
-    scheduler_thread = threading.Thread(target=run_scheduler, args=(job,), daemon=True)
+    scheduler_thread = threading.Thread(target=run_scheduler, args=(job,))
+    scheduler_thread.daemon = True
     scheduler_thread.start()
     
-    # Run Flask app
-    app.run(host='0.0.0.0', port=port)
+    # Run Flask app with specific host and port
+    app.run(host='0.0.0.0', port=port, debug=False)
 
 if __name__ == '__main__':
     main()
