@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 class XScraper:
     def __init__(self, username: str):
         self.username = username
-        self.base_url = "https://api.twitter.com/graphql"
+        self.base_url = "https://twitter.com/i/api/graphql"
         self.query_id = "QupGGFvwRkc-l5UHGIJh-w"
         self._refresh_headers()
 
@@ -28,9 +28,8 @@ class XScraper:
             'x-guest-token': guest_token,
             'x-twitter-client-language': 'en',
             'x-twitter-active-user': 'yes',
-            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            'x-twitter-auth-type': 'OAuth2Session',
             'x-csrf-token': 'missing',
+            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
             'accept': '*/*',
             'accept-language': 'en-US,en;q=0.9',
             'content-type': 'application/json',
@@ -57,53 +56,34 @@ class XScraper:
     def get_tweets(self):
         try:
             variables = {
-                "screen_name": self.username,
+                "userId": "44196397",
                 "count": 40,
-                "cursor": None,
                 "includePromotedContent": False,
-                "withSuperFollowsUserFields": True,
-                "withBirdwatchPivots": False,
+                "withQuickPromoteEligibilityTweetFields": False,
                 "withVoice": True,
                 "withV2Timeline": True
             }
 
             features = {
                 "responsive_web_twitter_blue_verified_badge_is_enabled": True,
-                "responsive_web_graphql_exclude_directive_enabled": True,
                 "verified_phone_label_enabled": False,
                 "responsive_web_graphql_timeline_navigation_enabled": True,
-                "responsive_web_graphql_skip_user_profile_image_extensions_enabled": False,
+                "unified_cards_ad_metadata_container_dynamic_card_content_query_enabled": True,
                 "tweetypie_unmention_optimization_enabled": True,
-                "vibe_api_enabled": True,
                 "responsive_web_edit_tweet_api_enabled": True,
                 "graphql_is_translatable_rweb_tweet_is_translatable_enabled": True,
                 "view_counts_everywhere_api_enabled": True,
                 "longform_notetweets_consumption_enabled": True,
+                "responsive_web_twitter_article_tweet_consumption_enabled": False,
                 "tweet_awards_web_tipping_enabled": False,
                 "freedom_of_speech_not_reach_fetch_enabled": True,
                 "standardized_nudges_misinfo": True,
-                "tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled": False,
-                "responsive_web_twitter_article_notes_tab_enabled": True,
-                "interactive_text_enabled": True,
-                "responsive_web_text_conversations_enabled": False,
+                "tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled": True,
                 "longform_notetweets_rich_text_read_enabled": True,
+                "longform_notetweets_inline_media_enabled": True,
                 "responsive_web_enhance_cards_enabled": False,
-                "super_follow_badge_privacy_enabled": True,
-                "super_follow_exclusive_tweet_notifications_enabled": True,
-                "super_follow_tweet_api_enabled": True,
-                "super_follow_user_api_enabled": True,
-                "blue_business_profile_image_shape_enabled": True,
-                "creator_subscriptions_subscription_count_enabled": True,
-                "creator_subscriptions_tweet_preview_api_enabled": True,
-                "subscriptions_verification_info_enabled": True,
-                "subscriptions_verification_info_verified_since_enabled": True,
-                "highlights_tweets_tab_ui_enabled": True,
-                "android_graphql_skip_api_media_color_palette": True,
-                "unified_cards_ad_metadata_container_dynamic_card_content_query_enabled": True,
-                "hidden_profile_likes_enabled": True,
-                "hidden_profile_subscriptions_enabled": True,
-                "responsive_web_graphql_skip_user_profile_image_extensions_webp_enabled": True,
-                "responsive_web_media_download_video_enabled": False
+                "responsive_web_media_download_video_enabled": False,
+                "responsive_web_text_conversations_enabled": False
             }
             
             params = {
@@ -155,8 +135,7 @@ class XScraper:
                             'reply_count': legacy['reply_count'],
                             'like_count': legacy['favorite_count'],
                             'quote_count': legacy.get('quote_count', 0),
-                            'view_count': result.get('views', {}).get('count', 0),
-                            'bookmark_count': legacy.get('bookmark_count', 0)
+                            'view_count': result.get('views', {}).get('count', 0)
                         }
                     })
                 except Exception as e:
@@ -196,7 +175,14 @@ def send_to_discord(webhook_url: str, tweets: list):
         except Exception as e:
             logger.error(f"Failed to send to Discord: {e}")
 
+def run_scheduler(job):
+    schedule.every(15).minutes.do(job)
+    while True:
+        schedule.run_pending()
+        time.sleep(1)
+
 def main():
+    port = int(os.getenv('PORT', 10000))
     username = os.getenv('X_USERNAME', 'Meteo_Kingdom')
     webhook_url = os.getenv('DISCORD_WEBHOOK_URL')
     
@@ -215,26 +201,22 @@ def main():
     # Run immediately on startup
     job()
     
-    # Schedule every 15 minutes
-    schedule.every(15).minutes.do(job)
-    
     app = Flask(__name__)
     
     @app.route('/')
     def home():
         return "X.com Metrics Scraper Running"
     
+    @app.route('/health')
+    def health():
+        return "OK", 200
+    
     # Run scheduler in background thread
-    def run_scheduler():
-        while True:
-            schedule.run_pending()
-            time.sleep(1)
-            
-    scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
+    scheduler_thread = threading.Thread(target=run_scheduler, args=(job,), daemon=True)
     scheduler_thread.start()
     
     # Run Flask app
-    app.run(host='0.0.0.0', port=int(os.getenv('PORT', 10000)))
+    app.run(host='0.0.0.0', port=port)
 
 if __name__ == '__main__':
     main()
