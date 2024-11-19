@@ -2,4 +2,4 @@ Flask==3.1.0
 requests==2.32.3
 schedule==1.2.2
 gunicorn==23.0.0
-scrapfly==1.0.0
+scrapfly==0.1.0
