@@ -14,93 +14,89 @@ class XScraper:
     def __init__(self, username: str):
         self.username = username
         self.base_url = "https://twitter.com/i/api/graphql"
+        self.query_id = "k5XapwcSikNsEsILW5FvgA"  # Updated query ID
+        self._refresh_headers()
+
+    def _refresh_headers(self):
         self.headers = {
             'authorization': 'Bearer AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs=1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA',
             'x-guest-token': self._get_guest_token(),
-            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-            'content-type': 'application/json',
+            'x-twitter-client-language': 'en',
+            'x-twitter-active-user': 'yes',
+            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
             'accept': '*/*',
             'accept-language': 'en-US,en;q=0.9',
-            'x-twitter-active-user': 'yes',
-            'x-twitter-client-language': 'en'
+            'content-type': 'application/json',
+            'x-csrf-token': 'unavailable'
         }
 
     def _get_guest_token(self):
         try:
             response = requests.post(
                 "https://api.twitter.com/1.1/guest/activate.json",
-                headers={
-                    "authorization": "Bearer AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs=1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA"
-                }
+                headers={"authorization": "Bearer AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs=1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA"}
             )
             return response.json()['guest_token']
         except Exception as e:
             logger.error(f"Failed to get guest token: {e}")
             return None
 
-    def refresh_guest_token(self):
-        self.headers['x-guest-token'] = self._get_guest_token()
-
-    def _get_user_id(self):
-        variables = {
-            "screen_name": self.username,
-            "withHighlightedLabel": True
-        }
-        
-        response = requests.get(
-            f"{self.base_url}/B7dy9SZKYHvrXDTS2qhXhA/UserByScreenName",
-            headers=self.headers,
-            params={
-                "variables": json.dumps(variables)
-            }
-        )
-        
-        if response.status_code == 401:
-            self.refresh_guest_token()
-            return self._get_user_id()
-            
-        data = response.json()
-        try:
-            return data['data']['user']['rest_id']
-        except (KeyError, TypeError):
-            logger.error(f"Failed to get user ID. Response: {data}")
-            return None
-
     def get_tweets(self):
         try:
-            user_id = self._get_user_id()
-            if not user_id:
-                logger.error("Could not get user ID")
-                return []
-
             variables = {
-                "userId": user_id,
+                "screen_name": self.username,
                 "count": 20,
+                "withHighlightedLabel": True,
                 "includePromotedContent": False,
-                "withQuickPromoteEligibilityTweetFields": False,
-                "withVoice": True,
-                "withV2Timeline": True
+                "withTweetQuoteCount": True,
+                "withBirdwatchNotes": True,
+                "withReactionsMetadata": True,
+                "withReactionsPerspective": True
+            }
+
+            features = {
+                "responsive_web_twitter_blue_verified_badge_is_enabled": True,
+                "responsive_web_graphql_exclude_directive_enabled": True,
+                "verified_phone_label_enabled": False,
+                "responsive_web_graphql_timeline_navigation_enabled": True,
+                "responsive_web_graphql_skip_user_profile_image_extensions_enabled": False,
+                "tweetypie_unmention_optimization_enabled": True,
+                "vibe_api_enabled": True,
+                "responsive_web_edit_tweet_api_enabled": True,
+                "graphql_is_translatable_rweb_tweet_is_translatable_enabled": True,
+                "view_counts_everywhere_api_enabled": True,
+                "freedom_of_speech_not_reach_fetch_enabled": True,
+                "standardized_nudges_misinfo": True,
+                "tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled": False,
+                "interactive_text_enabled": True,
+                "responsive_web_text_conversations_enabled": False,
+                "longform_notetweets_consumption_enabled": True,
+                "tweet_awards_web_tipping_enabled": False,
+                "longform_notetweets_rich_text_read_enabled": True
+            }
+            
+            params = {
+                'variables': json.dumps(variables),
+                'features': json.dumps(features)
             }
             
             response = requests.get(
-                f"{self.base_url}/pnYpQBCFJsdySzCZDJETIw/UserTweets",
+                f"{self.base_url}/{self.query_id}/UserTweets",
                 headers=self.headers,
-                params={
-                    "variables": json.dumps(variables)
-                }
+                params=params
             )
-            
+
             if response.status_code == 401:
-                self.refresh_guest_token()
+                self._refresh_headers()
                 return self.get_tweets()
-                
-            if response.status_code == 200:
-                return self._parse_tweets(response.json())
-            else:
+
+            if response.status_code != 200:
                 logger.error(f"Failed to fetch tweets: {response.status_code}")
-                logger.error(f"Response: {response.text}")
+                logger.error(f"Response: {response.text[:500]}")
                 return []
-                
+
+            return self._parse_tweets(response.json())
+
         except Exception as e:
             logger.error(f"Error getting tweets: {e}")
             return []
@@ -108,44 +104,37 @@ class XScraper:
     def _parse_tweets(self, data):
         tweets = []
         try:
-            instructions = data['data']['user']['result']['timeline_v2']['timeline']['instructions']
-            timeline = next((inst for inst in instructions if inst['type'] == 'TimelineAddEntries'), None)
+            entries = data['data']['user']['result']['timeline_v2']['timeline']['instructions'][1]['entries']
             
-            if not timeline:
-                logger.error("No timeline entries found")
-                return []
-
-            for entry in timeline['entries']:
-                try:
-                    if 'tweet' not in entry['content']['itemContent'].get('tweet_results', {}).get('result', {}):
-                        continue
+            for entry in entries:
+                if entry['entryId'].startswith('tweet-'):
+                    try:
+                        result = entry['content']['itemContent']['tweet_results']['result']
+                        legacy = result['legacy']
                         
-                    tweet = entry['content']['itemContent']['tweet_results']['result']['tweet']
-                    legacy = tweet.get('legacy', {})
-                    
-                    tweets.append({
-                        'id': tweet.get('rest_id'),
-                        'text': legacy.get('full_text', tweet.get('text', '')),
-                        'created_at': legacy.get('created_at'),
-                        'metrics': {
-                            'retweet_count': legacy.get('retweet_count', 0),
-                            'reply_count': legacy.get('reply_count', 0),
-                            'like_count': legacy.get('favorite_count', 0),
-                            'quote_count': legacy.get('quote_count', 0),
-                            'view_count': tweet.get('views', {}).get('count', 0),
-                            'bookmark_count': legacy.get('bookmark_count', 0)
-                        }
-                    })
-                except Exception as e:
-                    logger.error(f"Error parsing tweet: {e}")
-                    continue
+                        tweets.append({
+                            'id': result['rest_id'],
+                            'text': legacy['full_text'],
+                            'created_at': legacy['created_at'],
+                            'metrics': {
+                                'retweet_count': legacy['retweet_count'],
+                                'reply_count': legacy['reply_count'],
+                                'like_count': legacy['favorite_count'],
+                                'quote_count': legacy['quote_count'],
+                                'view_count': result.get('views', {}).get('count', 0),
+                                'bookmark_count': legacy.get('bookmark_count', 0)
+                            }
+                        })
+                    except Exception as e:
+                        logger.error(f"Error parsing tweet: {e}")
+                        continue
                 
             return tweets
         except Exception as e:
             logger.error(f"Error parsing tweets: {e}")
             return []
 
-def send_to_discord(webhook_url, tweets):
+def send_to_discord(webhook_url: str, tweets: list):
     if not tweets:
         logger.warning("No tweets to send")
         return
@@ -159,8 +148,7 @@ def send_to_discord(webhook_url, tweets):
                 {'name': 'Replies', 'value': str(tweet['metrics']['reply_count']), 'inline': True},
                 {'name': 'Likes', 'value': str(tweet['metrics']['like_count']), 'inline': True},
                 {'name': 'Views', 'value': str(tweet['metrics']['view_count']), 'inline': True},
-                {'name': 'Quotes', 'value': str(tweet['metrics']['quote_count']), 'inline': True},
-                {'name': 'Bookmarks', 'value': str(tweet['metrics']['bookmark_count']), 'inline': True},
+                {'name': 'Quotes', 'value': str(tweet['metrics']['quote_count']), 'inline': True}
             ],
             'timestamp': tweet['created_at']
         }
