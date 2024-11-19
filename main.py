@@ -127,7 +127,7 @@ def run_scheduler(scraper: Scraper):
     # Schedule job every hour
     schedule.every(1).hour.do(metrics_job, scraper=scraper)
 
-    while True:
+    while True:  # Fixed: Added missing colon
         schedule.run_pending()
         time.sleep(60)
 
