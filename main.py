@@ -45,6 +45,8 @@ class Scraper:
 
             if response.status_code == 200:
                 logger.info("Scraping successful!")
+                # Log the HTML content for debugging
+                logger.debug(f"Scraped HTML: {response.text[:1000]}")  # Log first 1000 characters of HTML
                 return response.text
             else:
                 logger.error(f"Scraping failed: {response.status_code} - {response.text}")
