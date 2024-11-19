@@ -1,68 +1,120 @@
+import os
 import requests
 import json
+import logging
+import schedule
+import threading
 import time
 
-# Scrapfly API Key
-SCRAPFLY_API_KEY = 'your_scrapfly_api_key'
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-# Your X.com profile URL (adjust based on your account's public URL)
-X_COM_PROFILE_URL = "https://x.com/your_username"
+# Load environment variables
+SCRAPFLY_API_KEY = os.getenv('SCRAPFLY_API_KEY')
+X_COM_PROFILE_URL = os.getenv('X_COM_PROFILE_URL')
+DISCORD_WEBHOOK_URL = os.getenv('DISCORD_WEBHOOK_URL')
 
-# Discord Webhook URL
-DISCORD_WEBHOOK_URL = 'https://discord.com/api/webhooks/your_discord_webhook_url'
+# Validate environment variables
+if not all([SCRAPFLY_API_KEY, X_COM_PROFILE_URL, DISCORD_WEBHOOK_URL]):
+    logger.error("Missing required environment variables")
+    exit(1)
 
-# Function to scrape X.com metrics (Impressions, interactions, etc.)
 def scrape_x_com():
-    # Set headers for Scrapfly API
-    headers = {
-        'Authorization': f'Bearer {SCRAPFLY_API_KEY}',
-        'Content-Type': 'application/json',
-    }
-
-    params = {
-        'url': X_COM_PROFILE_URL,
-        'render_js': 'true',  # Enables JS rendering if needed
-        'country_code': 'US',  # Optional: Set according to your location
-    }
-
-    # Make the request to Scrapfly API to scrape the data
-    response = requests.get('https://api.scrapfly.io/scrape', headers=headers, params=params)
-
-    if response.status_code == 200:
-        # Assuming JSON is returned and contains metrics like impressions, interactions
-        data = response.json()
-
-        impressions = data.get('impressions', 0)
-        interactions = data.get('interactions', 0)
-        followers = data.get('followers', 0)
-        profile_clicks = data.get('profile_clicks', 0)
+    """Scrape X.com metrics using Scrapfly API."""
+    try:
+        headers = {
+            'Authorization': f'Bearer {SCRAPFLY_API_KEY}',
+            'Content-Type': 'application/json',
+        }
+        params = {
+            'url': X_COM_PROFILE_URL,
+            'render_js': 'true',
+            'country_code': 'US',
+        }
         
-        return impressions, interactions, followers, profile_clicks
-    else:
-        print("Error scraping data:", response.text)
+        logger.info("Attempting to scrape X.com metrics...")
+        response = requests.get('https://api.scrapfly.io/scrape', headers=headers, params=params)
+        
+        if response.status_code == 200:
+            data = response.json()
+            
+            # Extract metrics with default values
+            impressions = data.get('impressions', 0)
+            interactions = data.get('interactions', 0)
+            followers = data.get('followers', 0)
+            profile_clicks = data.get('profile_clicks', 0)
+            
+            logger.info(f"Scraped metrics: Impressions={impressions}, Interactions={interactions}")
+            return impressions, interactions, followers, profile_clicks
+        else:
+            logger.error(f"Scraping failed: {response.status_code} - {response.text}")
+            return None, None, None, None
+    
+    except requests.RequestException as e:
+        logger.error(f"Request error: {e}")
+        return None, None, None, None
+    except json.JSONDecodeError as e:
+        logger.error(f"JSON parsing error: {e}")
         return None, None, None, None
 
-# Function to send the scraped data to Discord
 def send_to_discord(impressions, interactions, followers, profile_clicks):
-    # Format the message to be sent to Discord
-    message = {
-        'content': f"X.com Metrics:\nImpressions: {impressions}\nInteractions: {interactions}\nFollowers: {followers}\nProfile Clicks: {profile_clicks}"
-    }
+    """Send scraped metrics to Discord webhook."""
+    if any(metric is None for metric in [impressions, interactions, followers, profile_clicks]):
+        logger.warning("No metrics to send")
+        return
     
-    # Send the message to Discord webhook
-    response = requests.post(DISCORD_WEBHOOK_URL, json=message)
-    if response.status_code == 204:
-        print("Successfully sent to Discord")
-    else:
-        print(f"Failed to send to Discord: {response.status_code} - {response.text}")
+    try:
+        message = {
+            'content': f"📊 X.com Metrics:\n"
+                       f"• Impressions: {impressions}\n"
+                       f"• Interactions: {interactions}\n"
+                       f"• Followers: {followers}\n"
+                       f"• Profile Clicks: {profile_clicks}"
+        }
+        
+        logger.info("Sending metrics to Discord...")
+        response = requests.post(DISCORD_WEBHOOK_URL, json=message)
+        
+        if response.status_code == 204:
+            logger.info("Successfully sent metrics to Discord")
+        else:
+            logger.error(f"Discord webhook failed: {response.status_code} - {response.text}")
+    
+    except requests.RequestException as e:
+        logger.error(f"Error sending to Discord: {e}")
 
-# Main function to scrape the data and send it to Discord
-def main():
+def metrics_job():
+    """Job to scrape X.com metrics and send to Discord."""
+    logger.info("Starting metrics collection job...")
     impressions, interactions, followers, profile_clicks = scrape_x_com()
-    if impressions is not None:
-        send_to_discord(impressions, interactions, followers, profile_clicks)
-    else:
-        print("No data available.")
+    send_to_discord(impressions, interactions, followers, profile_clicks)
+    logger.info("Metrics job completed")
 
-if __name__ == "__main__":
-    main()
+def run_scheduler():
+    """Run scheduler to periodically collect and send metrics."""
+    logger.info("Starting scheduler...")
+    metrics_job()  # Run immediately on startup
+    
+    # Schedule job every hour
+    schedule.every(1).hour.do(metrics_job)
+    
+    while True:
+        schedule.run_pending()
+        time.sleep(60)
+
+if __name__ == '__main__':
+    # Start scheduler in a separate thread
+    scheduler_thread = threading.Thread(target=run_scheduler)
+    scheduler_thread.daemon = True
+    scheduler_thread.start()
+    
+    # Start Flask or simple web server to keep app alive
+    from flask import Flask
+    app = Flask(__name__)
+    
+    @app.route('/')
+    def home():
+        return "X.com Metrics Scraper is running"
+    
+    app.run(host='0.0.0.0', port=int(os.getenv('PORT', 10000)))
