@@ -13,8 +13,8 @@ logger = logging.getLogger(__name__)
 class XScraper:
     def __init__(self, username: str):
         self.username = username
-        self.base_url = "https://twitter.com/i/api/graphql"
-        self.query_id = "QupGGFvwRkc-l5UHGIJh-w"
+        self.base_url = "https://api.twitter.com/graphql"
+        self.query_id = "kgI_HmX1BVn-BOi2PbtIcw"
         self._refresh_headers()
 
     def _refresh_headers(self):
@@ -58,10 +58,20 @@ class XScraper:
             variables = {
                 "userId": "1837456870333992964",
                 "count": 40,
+                "cursor": None,
                 "includePromotedContent": False,
-                "withQuickPromoteEligibilityTweetFields": False,
+                "withBirdwatchPivots": False,
+                "withQuickPromoteEligibilityTweetFields": True,
+                "withSuperFollowsUserFields": True,
+                "withDownvotePerspective": False,
+                "withReactionsMetadata": False,
+                "withReactionsPerspective": False,
+                "withSuperFollowsTweetFields": True,
                 "withVoice": True,
-                "withV2Timeline": True
+                "withV2Timeline": True,
+                "__fs_responsive_web_like_by_author_enabled": False,
+                "__fs_dont_mention_me_view_api_enabled": True,
+                "__fs_interactive_text_enabled": True
             }
 
             features = {
@@ -81,9 +91,9 @@ class XScraper:
                 "tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled": True,
                 "longform_notetweets_rich_text_read_enabled": True,
                 "longform_notetweets_inline_media_enabled": True,
-                "responsive_web_enhance_cards_enabled": False,
-                "responsive_web_media_download_video_enabled": False,
-                "responsive_web_text_conversations_enabled": False
+                "c9s_tweet_anatomy_moderator_badge_enabled": False,
+                "rweb_lists_timeline_redesign_enabled": True,
+                "responsive_web_enhance_cards_enabled": False
             }
             
             params = {
