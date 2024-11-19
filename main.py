@@ -7,6 +7,8 @@ import time
 from flask import Flask
 import json
 from bs4 import BeautifulSoup
+import urllib3
+urllib3.disable_warnings()
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -14,11 +16,18 @@ logger = logging.getLogger(__name__)
 class XScraper:
     def __init__(self, username: str):
         self.username = username
-        self.base_url = "https://nitter.it"
+        self.base_url = "https://nitter.cz"
         self.headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.5',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'none',
+            'Sec-Fetch-User': '?1'
         }
 
     def get_tweets(self):
@@ -28,31 +37,25 @@ class XScraper:
                 f"{self.base_url}/{self.username}",
                 headers=self.headers,
                 timeout=30,
-                verify=False  # Some nitter instances have SSL issues
+                verify=False
             )
+            
+            logger.debug(f"Response status: {response.status_code}")
+            logger.debug(f"Response content length: {len(response.text)}")
 
             if response.status_code != 200:
                 logger.error(f"Failed to fetch tweets: {response.status_code}")
                 logger.error(f"Response: {response.text[:500]}")
                 return []
 
-            return self._parse_tweets(response.text)
-
-        except Exception as e:
-            logger.error(f"Error getting tweets: {e}")
-            return []
-
-    def _parse_tweets(self, html):
-        tweets = []
-        try:
-            soup = BeautifulSoup(html, 'html.parser')
+            soup = BeautifulSoup(response.text, 'html.parser')
             timeline = soup.find('div', {'class': 'timeline'})
             
             if not timeline:
-                logger.error("No timeline found in HTML response")
-                logger.debug(f"HTML content: {html[:1000]}")
+                logger.error("No timeline found")
                 return []
-                
+            
+            tweets = []
             tweet_items = timeline.find_all('div', {'class': 'timeline-item'})
             
             for item in tweet_items:
@@ -61,47 +64,42 @@ class XScraper:
                     if not tweet_body:
                         continue
 
-                    tweet_content = tweet_body.find('div', {'class': 'tweet-content'})
-                    tweet_stats = item.find('div', {'class': 'tweet-stats'})
-                    tweet_link = item.find('a', {'class': 'tweet-link'})
-                    tweet_date = item.find('span', {'class': 'tweet-date'})
+                    content = tweet_body.find('div', {'class': 'tweet-content'})
+                    stats = item.find('div', {'class': 'tweet-stats'})
+                    link = item.find('a', {'class': 'tweet-link'})
+                    date = item.find('span', {'class': 'tweet-date'})
 
-                    stats = {}
-                    if tweet_stats:
-                        stats_items = tweet_stats.find_all('span', {'class': 'tweet-stat'})
-                        for stat in stats_items:
-                            stat_text = stat.get_text(strip=True).lower()
-                            number = ''.join(filter(str.isdigit, stat_text)) or '0'
-                            if 'retweet' in stat_text:
-                                stats['retweet_count'] = int(number)
-                            elif 'quote' in stat_text:
-                                stats['quote_count'] = int(number)
-                            elif 'like' in stat_text:
-                                stats['like_count'] = int(number)
-                            elif 'repl' in stat_text:
-                                stats['reply_count'] = int(number)
+                    metrics = {'retweet_count': 0, 'reply_count': 0, 'like_count': 0, 'quote_count': 0}
+                    
+                    if stats:
+                        for stat in stats.find_all('div', {'class': 'icon-container'}):
+                            text = stat.get_text(strip=True).lower()
+                            value = int(''.join(filter(str.isdigit, text)) or 0)
+                            
+                            if 'retweet' in text:
+                                metrics['retweet_count'] = value
+                            elif 'quote' in text:
+                                metrics['quote_count'] = value
+                            elif 'like' in text:
+                                metrics['like_count'] = value
+                            elif 'repl' in text:
+                                metrics['reply_count'] = value
 
                     tweets.append({
-                        'id': tweet_link['href'].split('/')[-1] if tweet_link else '',
-                        'text': tweet_content.get_text(strip=True) if tweet_content else '',
-                        'created_at': tweet_date['title'] if tweet_date else '',
-                        'metrics': {
-                            'retweet_count': stats.get('retweet_count', 0),
-                            'reply_count': stats.get('reply_count', 0),
-                            'like_count': stats.get('like_count', 0),
-                            'quote_count': stats.get('quote_count', 0),
-                            'view_count': 0
-                        }
+                        'id': link['href'].split('/')[-1] if link else '',
+                        'text': content.get_text(strip=True) if content else '',
+                        'created_at': date['title'] if date and 'title' in date.attrs else '',
+                        'metrics': metrics
                     })
-                    logger.info(f"Successfully parsed tweet {tweets[-1]['id']}")
                 except Exception as e:
-                    logger.error(f"Error parsing tweet item: {e}")
+                    logger.error(f"Error parsing tweet: {e}")
                     continue
 
             logger.info(f"Successfully parsed {len(tweets)} tweets")
             return tweets
+
         except Exception as e:
-            logger.error(f"Error parsing tweets: {e}")
+            logger.error(f"Error getting tweets: {e}")
             return []
 
 def send_to_discord(webhook_url: str, tweets: list):
