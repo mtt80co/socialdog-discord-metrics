@@ -6,6 +6,7 @@ import threading
 import time
 from flask import Flask
 import json
+from bs4 import BeautifulSoup
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -13,103 +14,86 @@ logger = logging.getLogger(__name__)
 class XScraper:
     def __init__(self, username: str):
         self.username = username
-        self.base_url = "https://api.twitter.com/2/timeline/profile"
-        self._refresh_headers()
-
-    def _refresh_headers(self):
-        guest_token = self._get_guest_token()
-        if not guest_token:
-            logger.error("Failed to get guest token")
-            return
-
+        self.base_url = "https://nitter.net"
         self.headers = {
-            'authorization': 'Bearer AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs=1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA',
-            'x-guest-token': guest_token,
-            'x-twitter-client-language': 'en',
-            'x-twitter-active-user': 'yes',
-            'x-csrf-token': 'missing',
-            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
-            'accept': '*/*',
-            'accept-language': 'en-US,en;q=0.9',
-            'content-type': 'application/json',
-            'referer': f'https://twitter.com/{self.username}',
-            'origin': 'https://twitter.com',
-            'sec-fetch-dest': 'empty',
-            'sec-fetch-mode': 'cors',
-            'sec-fetch-site': 'same-origin'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Connection': 'keep-alive',
         }
-
-    def _get_guest_token(self):
-        try:
-            response = requests.post(
-                "https://api.twitter.com/1.1/guest/activate.json",
-                headers={
-                    "authorization": "Bearer AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs=1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA"
-                }
-            )
-            if response.status_code == 200:
-                return response.json()['guest_token']
-            logger.error(f"Failed to get guest token: {response.status_code}")
-            return None
-        except Exception as e:
-            logger.error(f"Error getting guest token: {e}")
-            return None
 
     def get_tweets(self):
         try:
-            params = {
-                'cursor': '-1',
-                'includePromotedContent': 'false',
-                'count': '20',
-                'userId': '1837456870333992964',
-                'withTweetQuoteCount': 'true',
-                'withBirdwatchNotes': 'false',
-                'withVoice': 'true',
-                'withV2Timeline': 'true'
-            }
-
             response = requests.get(
-                f"{self.base_url}/{params['userId']}.json",
+                f"{self.base_url}/{self.username}",
                 headers=self.headers,
-                params=params
+                timeout=10
             )
-
-            if response.status_code == 401:
-                self._refresh_headers()
-                return self.get_tweets()
 
             if response.status_code != 200:
                 logger.error(f"Failed to fetch tweets: {response.status_code}")
                 logger.error(f"Response: {response.text[:500]}")
                 return []
 
-            return self._parse_tweets(response.json())
+            return self._parse_tweets(response.text)
 
         except Exception as e:
             logger.error(f"Error getting tweets: {e}")
             return []
 
-    def _parse_tweets(self, data):
+    def _parse_tweets(self, html):
         tweets = []
         try:
-            for tweet in data.get('globalObjects', {}).get('tweets', {}).values():
+            soup = BeautifulSoup(html, 'html.parser')
+            timeline = soup.find('div', {'class': 'timeline'})
+            
+            if not timeline:
+                logger.error("No timeline found")
+                return []
+                
+            tweet_items = timeline.find_all('div', {'class': 'timeline-item'})
+            
+            for item in tweet_items:
                 try:
+                    tweet_body = item.find('div', {'class': 'tweet-body'})
+                    if not tweet_body:
+                        continue
+
+                    tweet_content = tweet_body.find('div', {'class': 'tweet-content'})
+                    tweet_stats = item.find('div', {'class': 'tweet-stats'})
+                    tweet_link = item.find('a', {'class': 'tweet-link'})
+                    tweet_date = item.find('span', {'class': 'tweet-date'})
+
+                    stats = {}
+                    if tweet_stats:
+                        stats_items = tweet_stats.find_all('span', {'class': 'tweet-stat'})
+                        for stat in stats_items:
+                            stat_text = stat.get_text(strip=True)
+                            if 'Retweets' in stat_text:
+                                stats['retweet_count'] = int(stat_text.split()[0] or 0)
+                            elif 'Quotes' in stat_text:
+                                stats['quote_count'] = int(stat_text.split()[0] or 0)
+                            elif 'Likes' in stat_text:
+                                stats['like_count'] = int(stat_text.split()[0] or 0)
+                            elif 'Replies' in stat_text:
+                                stats['reply_count'] = int(stat_text.split()[0] or 0)
+
                     tweets.append({
-                        'id': tweet['id_str'],
-                        'text': tweet['full_text'] if 'full_text' in tweet else tweet['text'],
-                        'created_at': tweet['created_at'],
+                        'id': tweet_link['href'].split('/')[-1] if tweet_link else '',
+                        'text': tweet_content.get_text(strip=True) if tweet_content else '',
+                        'created_at': tweet_date['title'] if tweet_date else '',
                         'metrics': {
-                            'retweet_count': tweet['retweet_count'],
-                            'reply_count': tweet.get('reply_count', 0),
-                            'like_count': tweet['favorite_count'],
-                            'quote_count': tweet.get('quote_count', 0),
-                            'view_count': tweet.get('ext_views', {}).get('count', 0)
+                            'retweet_count': stats.get('retweet_count', 0),
+                            'reply_count': stats.get('reply_count', 0),
+                            'like_count': stats.get('like_count', 0),
+                            'quote_count': stats.get('quote_count', 0),
+                            'view_count': 0  # Nitter doesn't provide view counts
                         }
                     })
                 except Exception as e:
-                    logger.error(f"Error parsing tweet: {e}")
+                    logger.error(f"Error parsing tweet item: {e}")
                     continue
-                
+
             return tweets
         except Exception as e:
             logger.error(f"Error parsing tweets: {e}")
@@ -128,7 +112,6 @@ def send_to_discord(webhook_url: str, tweets: list):
                 {'name': 'Retweets', 'value': str(tweet['metrics']['retweet_count']), 'inline': True},
                 {'name': 'Replies', 'value': str(tweet['metrics']['reply_count']), 'inline': True},
                 {'name': 'Likes', 'value': str(tweet['metrics']['like_count']), 'inline': True},
-                {'name': 'Views', 'value': str(tweet['metrics']['view_count']), 'inline': True},
                 {'name': 'Quotes', 'value': str(tweet['metrics']['quote_count']), 'inline': True}
             ],
             'timestamp': tweet['created_at']
