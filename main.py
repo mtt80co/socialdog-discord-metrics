@@ -6,11 +6,7 @@ import threading
 import time
 from flask import Flask
 import json
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.chrome.options import Options
+from playwright.sync_api import sync_playwright
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -18,60 +14,69 @@ logger = logging.getLogger(__name__)
 class XScraper:
     def __init__(self, username: str):
         self.username = username
-        self.chrome_options = Options()
-        self.chrome_options.add_argument('--headless')
-        self.chrome_options.add_argument('--no-sandbox')
-        self.chrome_options.add_argument('--disable-dev-shm-usage')
-        self.chrome_options.add_argument('--disable-gpu')
-        self.chrome_options.add_argument('--window-size=1920,1080')
-        self.chrome_options.add_argument('--disable-notifications')
-        self.chrome_options.add_argument('user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36')
-
+        
     def get_tweets(self):
         try:
-            driver = webdriver.Chrome(options=self.chrome_options)
-            driver.get(f'https://twitter.com/{self.username}')
-            
-            wait = WebDriverWait(driver, 20)
-            tweets = wait.until(EC.presence_of_all_elements_located((By.CSS_SELECTOR, 'article[data-testid="tweet"]')))
-            
-            parsed_tweets = []
-            for tweet in tweets[:20]:
-                try:
-                    text = tweet.find_element(By.CSS_SELECTOR, '[data-testid="tweetText"]').text
-                    stats = tweet.find_elements(By.CSS_SELECTOR, '[data-testid$="-count"]')
-                    metrics = {'retweet_count': 0, 'reply_count': 0, 'like_count': 0, 'quote_count': 0}
-                    
-                    for stat in stats:
-                        stat_id = stat.get_attribute('data-testid')
-                        if 'retweet' in stat_id:
-                            metrics['retweet_count'] = int(stat.text or 0)
-                        elif 'reply' in stat_id:
-                            metrics['reply_count'] = int(stat.text or 0)
-                        elif 'like' in stat_id:
-                            metrics['like_count'] = int(stat.text or 0)
-                    
-                    link = tweet.find_element(By.CSS_SELECTOR, 'time').find_element(By.XPATH, '..').get_attribute('href')
-                    tweet_id = link.split('/')[-1]
-                    timestamp = tweet.find_element(By.CSS_SELECTOR, 'time').get_attribute('datetime')
-                    
-                    parsed_tweets.append({
-                        'id': tweet_id,
-                        'text': text,
-                        'created_at': timestamp,
-                        'metrics': metrics
-                    })
-                except Exception as e:
-                    logger.error(f"Error parsing tweet: {e}")
-                    continue
-                    
-            driver.quit()
-            return parsed_tweets
+            with sync_playwright() as p:
+                # Launch browser with required arguments
+                browser = p.chromium.launch(
+                    headless=True,
+                    args=['--no-sandbox', '--disable-dev-shm-usage']
+                )
+                
+                # Create new context and page
+                context = browser.new_context(viewport={'width': 1920, 'height': 1080})
+                page = context.new_page()
+                
+                # Navigate to Twitter profile
+                page.goto(f'https://twitter.com/{self.username}', wait_until='networkidle')
+                
+                # Wait for tweets to load
+                page.wait_for_selector('article[data-testid="tweet"]', timeout=30000)
+                tweets = page.query_selector_all('article[data-testid="tweet"]')
+                parsed_tweets = []
+                
+                # Parse each tweet
+                for tweet in tweets[:20]:
+                    try:
+                        text_element = tweet.query_selector('[data-testid="tweetText"]')
+                        text = text_element.inner_text() if text_element else ""
+                        
+                        metrics = {'retweet_count': 0, 'reply_count': 0, 'like_count': 0, 'quote_count': 0}
+                        
+                        # Get metrics
+                        for metric in ['retweet', 'reply', 'like']:
+                            try:
+                                count = tweet.query_selector(f'[data-testid="{metric}-count"]')
+                                if count:
+                                    metrics[f'{metric}_count'] = int(count.inner_text() or 0)
+                            except Exception as e:
+                                logger.debug(f"Error getting {metric} count: {e}")
+                                
+                        # Get tweet metadata
+                        time_element = tweet.query_selector('time')
+                        link = time_element.evaluate('el => el.parentElement.href')
+                        tweet_id = link.split('/')[-1]
+                        timestamp = time_element.get_attribute('datetime')
+                        
+                        parsed_tweets.append({
+                            'id': tweet_id,
+                            'text': text,
+                            'created_at': timestamp,
+                            'metrics': metrics
+                        })
+                        logger.info(f"Successfully parsed tweet {tweet_id}")
+                    except Exception as e:
+                        logger.error(f"Error parsing tweet: {e}")
+                        continue
+                
+                browser.close()
+                return parsed_tweets
 
         except Exception as e:
             logger.error(f"Error getting tweets: {e}")
-            if 'driver' in locals():
-                driver.quit()
+            if 'browser' in locals():
+                browser.close()
             return []
 
 def send_to_discord(webhook_url: str, tweets: list):
@@ -149,6 +154,6 @@ def create_app():
     return app
 
 if __name__ == '__main__':
-    port = int(os.getenv('PORT', 10000))
     app = create_app()
+    port = int(os.getenv('PORT', 10000))
     app.run(host='0.0.0.0', port=port)
