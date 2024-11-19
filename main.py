@@ -14,20 +14,21 @@ logger = logging.getLogger(__name__)
 class XScraper:
     def __init__(self, username: str):
         self.username = username
-        self.base_url = "https://nitter.net"
+        self.base_url = "https://nitter.it"
         self.headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
             'Accept-Language': 'en-US,en;q=0.5',
-            'Connection': 'keep-alive',
         }
 
     def get_tweets(self):
         try:
+            logger.info(f"Fetching tweets from {self.base_url}/{self.username}")
             response = requests.get(
                 f"{self.base_url}/{self.username}",
                 headers=self.headers,
-                timeout=10
+                timeout=30,
+                verify=False  # Some nitter instances have SSL issues
             )
 
             if response.status_code != 200:
@@ -48,7 +49,8 @@ class XScraper:
             timeline = soup.find('div', {'class': 'timeline'})
             
             if not timeline:
-                logger.error("No timeline found")
+                logger.error("No timeline found in HTML response")
+                logger.debug(f"HTML content: {html[:1000]}")
                 return []
                 
             tweet_items = timeline.find_all('div', {'class': 'timeline-item'})
@@ -68,15 +70,16 @@ class XScraper:
                     if tweet_stats:
                         stats_items = tweet_stats.find_all('span', {'class': 'tweet-stat'})
                         for stat in stats_items:
-                            stat_text = stat.get_text(strip=True)
-                            if 'Retweets' in stat_text:
-                                stats['retweet_count'] = int(stat_text.split()[0] or 0)
-                            elif 'Quotes' in stat_text:
-                                stats['quote_count'] = int(stat_text.split()[0] or 0)
-                            elif 'Likes' in stat_text:
-                                stats['like_count'] = int(stat_text.split()[0] or 0)
-                            elif 'Replies' in stat_text:
-                                stats['reply_count'] = int(stat_text.split()[0] or 0)
+                            stat_text = stat.get_text(strip=True).lower()
+                            number = ''.join(filter(str.isdigit, stat_text)) or '0'
+                            if 'retweet' in stat_text:
+                                stats['retweet_count'] = int(number)
+                            elif 'quote' in stat_text:
+                                stats['quote_count'] = int(number)
+                            elif 'like' in stat_text:
+                                stats['like_count'] = int(number)
+                            elif 'repl' in stat_text:
+                                stats['reply_count'] = int(number)
 
                     tweets.append({
                         'id': tweet_link['href'].split('/')[-1] if tweet_link else '',
@@ -87,13 +90,15 @@ class XScraper:
                             'reply_count': stats.get('reply_count', 0),
                             'like_count': stats.get('like_count', 0),
                             'quote_count': stats.get('quote_count', 0),
-                            'view_count': 0  # Nitter doesn't provide view counts
+                            'view_count': 0
                         }
                     })
+                    logger.info(f"Successfully parsed tweet {tweets[-1]['id']}")
                 except Exception as e:
                     logger.error(f"Error parsing tweet item: {e}")
                     continue
 
+            logger.info(f"Successfully parsed {len(tweets)} tweets")
             return tweets
         except Exception as e:
             logger.error(f"Error parsing tweets: {e}")
