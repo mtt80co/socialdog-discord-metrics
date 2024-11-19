@@ -13,8 +13,7 @@ logger = logging.getLogger(__name__)
 class XScraper:
     def __init__(self, username: str):
         self.username = username
-        self.base_url = "https://twitter.com/i/api/2/timeline"
-        self.query_id = "tweet-detail"
+        self.base_url = "https://api.twitter.com/2/timeline/profile"
         self._refresh_headers()
 
     def _refresh_headers(self):
@@ -35,9 +34,6 @@ class XScraper:
             'content-type': 'application/json',
             'referer': f'https://twitter.com/{self.username}',
             'origin': 'https://twitter.com',
-            'sec-ch-ua': '"Google Chrome";v="119", "Chromium";v="119", "Not?A_Brand";v="24"',
-            'sec-ch-ua-mobile': '?0',
-            'sec-ch-ua-platform': '"Windows"',
             'sec-fetch-dest': 'empty',
             'sec-fetch-mode': 'cors',
             'sec-fetch-site': 'same-origin'
@@ -62,41 +58,18 @@ class XScraper:
     def get_tweets(self):
         try:
             params = {
-                'include_profile_interstitial_type': '1',
-                'include_blocking': '1',
-                'include_blocked_by': '1',
-                'include_followed_by': '1',
-                'include_want_retweets': '1',
-                'include_mute_edge': '1',
-                'include_can_dm': '1',
-                'include_can_media_tag': '1',
-                'include_ext_has_nft_avatar': '1',
-                'include_ext_is_blue_verified': '1',
-                'include_ext_verified_type': '1',
-                'skip_status': '1',
-                'cards_platform': 'Web-12',
-                'include_cards': '1',
-                'include_ext_alt_text': 'true',
-                'include_ext_limited_action_results': 'false',
-                'include_quote_count': 'true',
-                'include_reply_count': '1',
-                'tweet_mode': 'extended',
-                'include_ext_views': 'true',
-                'include_entities': 'true',
-                'include_user_entities': 'true',
-                'include_ext_media_color': 'true',
-                'include_ext_media_availability': 'true',
-                'include_ext_sensitive_media_warning': 'true',
-                'include_ext_trusted_friends_metadata': 'true',
-                'send_error_codes': 'true',
-                'simple_quoted_tweet': 'true',
-                'count': 40,
+                'cursor': '-1',
+                'includePromotedContent': 'false',
+                'count': '20',
                 'userId': '1837456870333992964',
-                'ext': 'mediaStats,highlightedLabel,hasNftAvatar,voiceInfo,birdwatchPivot,enrichments,superFollowMetadata,unmentionInfo,editControl,collab_control,vibe'
+                'withTweetQuoteCount': 'true',
+                'withBirdwatchNotes': 'false',
+                'withVoice': 'true',
+                'withV2Timeline': 'true'
             }
 
             response = requests.get(
-                f"{self.base_url}/user/{params['userId']}/tweets",
+                f"{self.base_url}/{params['userId']}.json",
                 headers=self.headers,
                 params=params
             )
@@ -123,14 +96,14 @@ class XScraper:
                 try:
                     tweets.append({
                         'id': tweet['id_str'],
-                        'text': tweet['full_text'],
+                        'text': tweet['full_text'] if 'full_text' in tweet else tweet['text'],
                         'created_at': tweet['created_at'],
                         'metrics': {
                             'retweet_count': tweet['retweet_count'],
-                            'reply_count': tweet['reply_count'],
+                            'reply_count': tweet.get('reply_count', 0),
                             'like_count': tweet['favorite_count'],
                             'quote_count': tweet.get('quote_count', 0),
-                            'view_count': tweet.get('ext', {}).get('views', {}).get('r', {}).get('ok', {}).get('count', 0)
+                            'view_count': tweet.get('ext_views', {}).get('count', 0)
                         }
                     })
                 except Exception as e:
