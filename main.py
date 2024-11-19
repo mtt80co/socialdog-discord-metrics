@@ -56,7 +56,7 @@ class XScraper:
     def get_tweets(self):
         try:
             variables = {
-                "userId": "44196397",
+                "userId": "1837456870333992964",
                 "count": 40,
                 "includePromotedContent": False,
                 "withQuickPromoteEligibilityTweetFields": False,
