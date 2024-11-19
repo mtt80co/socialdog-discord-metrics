@@ -36,12 +36,12 @@ class Scraper:
             params = {
                 'url': self.profile_url,
                 'render_js': 'true',
-                'wait_for': '5s',
+                'wait_for': '10s',  # Increased wait time
                 'country_code': 'US',
             }
 
             logger.info("Attempting to scrape X.com profile...")
-            response = requests.get('https://api.scrapfly.io/scrape', headers=headers, params=params, timeout=30)
+            response = requests.get('https://api.scrapfly.io/scrape', headers=headers, params=params, timeout=60)
 
             if response.status_code == 200:
                 logger.info("Scraping successful!")
@@ -60,22 +60,26 @@ class Scraper:
         posts = []
 
         try:
-            # DEBUG: Send the full HTML to Discord if posts aren't found
-            post_elements = soup.find_all('div', class_='specific-class-for-posts')  # Update with actual class
+            # Updated selectors to target X.com post elements
+            post_elements = soup.select('div[data-testid="cellInnerDiv"]')
+            
             if not post_elements:
-                logger.warning("No posts found. Sending HTML snippet to Discord for debugging.")
-                requests.post(DISCORD_WEBHOOK_URL, json={"content": f"HTML snippet:\n{html[:2000]}"})  # Send HTML
+                logger.warning("No posts found. Sending full HTML to Discord for debugging.")
+                requests.post(DISCORD_WEBHOOK_URL, json={
+                    "content": f"DEBUG: No posts found. HTML length: {len(html)} chars. First 500 chars:\n```\n{html[:500]}\n```"
+                })
                 return []
 
             for post in post_elements:
-                content = post.get_text(strip=True)
-                impressions = post.get('data-impressions', 0)
-                engagements = post.get('data-engagements', 0)
+                # Extract text content
+                text_element = post.select_one('div[lang]')
+                content = text_element.get_text(strip=True) if text_element else "No content"
 
+                # Try to extract engagement metrics (may require manual parsing)
                 posts.append({
                     'content': content,
-                    'impressions': impressions,
-                    'engagements': engagements,
+                    'impressions': 0,  # X.com may require additional parsing
+                    'engagements': 0,  # X.com may require additional parsing
                 })
 
             logger.info(f"Extracted {len(posts)} posts.")
@@ -94,17 +98,14 @@ def send_to_discord(posts):
     for post in posts:
         try:
             message = {
-                'content': f"📄 Post Analytics:\n"
-                           f"• Content: {post['content']}\n"
-                           f"• Impressions: {post.get('impressions', 0)}\n"
-                           f"• Engagements: {post.get('engagements', 0)}"
+                'content': f"📄 Post Content:\n```\n{post['content']}\n```"
             }
 
-            logger.info("Sending post analytics to Discord...")
+            logger.info("Sending post to Discord...")
             response = requests.post(DISCORD_WEBHOOK_URL, json=message)
 
             if response.status_code == 204:
-                logger.info("Successfully sent post analytics to Discord")
+                logger.info("Successfully sent post to Discord")
             else:
                 logger.error(f"Discord webhook failed: {response.status_code} - {response.text}")
 
