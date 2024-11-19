@@ -59,27 +59,29 @@ class Scraper:
             return None
 
     def extract_posts(self, data: Dict) -> List[Dict]:
-        """Extract individual posts from the scraped data."""
+        """Extract detailed analytics for each post."""
         try:
-            # Adjust based on actual response structure
-            posts = data.get('posts', [])
-            parsed_posts = []
-            for post in posts:
-                parsed_posts.append({
+            # Replace 'posts' with the actual key in the JSON response that holds post data
+            posts_data = data.get('posts', [])
+            posts = []
+            for post in posts_data:
+                posts.append({
+                    'quote': post.get('quote', ''),
                     'content': post.get('content', 'No content'),
                     'impressions': post.get('impressions', 0),
-                    'interactions': post.get('interactions', 0),
-                    'followers': post.get('followers', 0),
-                    'profile_clicks': post.get('profile_clicks', 0),
+                    'engagements': post.get('engagements', 0),
+                    'detail_expands': post.get('detail_expands', 0),
+                    'new_followers': post.get('new_followers', 0),
+                    'profile_visits': post.get('profile_visits', 0),
                 })
-            logger.info(f"Extracted {len(parsed_posts)} posts.")
-            return parsed_posts
+            logger.info(f"Extracted {len(posts)} posts.")
+            return posts
         except KeyError as e:
             logger.error(f"Error extracting posts: {e}")
             return []
 
 def send_to_discord(posts: List[Dict]):
-    """Send scraped posts to Discord webhook."""
+    """Send scraped post analytics to Discord webhook."""
     if not posts:
         logger.warning("No posts to send")
         return
@@ -87,19 +89,21 @@ def send_to_discord(posts: List[Dict]):
     for post in posts:
         try:
             message = {
-                'content': f"📄 New Post:\n"
+                'content': f"📄 Post Analytics:\n"
+                           f"• Quote: {post['quote']}\n"
                            f"• Content: {post['content']}\n"
                            f"• Impressions: {post['impressions']}\n"
-                           f"• Interactions: {post['interactions']}\n"
-                           f"• Followers: {post['followers']}\n"
-                           f"• Profile Clicks: {post['profile_clicks']}"
+                           f"• Engagements: {post['engagements']}\n"
+                           f"• Detail Expands: {post['detail_expands']}\n"
+                           f"• New Followers: {post['new_followers']}\n"
+                           f"• Profile Visits: {post['profile_visits']}"
             }
 
-            logger.info("Sending post to Discord...")
+            logger.info("Sending post analytics to Discord...")
             response = requests.post(DISCORD_WEBHOOK_URL, json=message)
 
             if response.status_code == 204:
-                logger.info("Successfully sent post to Discord")
+                logger.info("Successfully sent post analytics to Discord")
             else:
                 logger.error(f"Discord webhook failed: {response.status_code} - {response.text}")
 
@@ -123,4 +127,23 @@ def run_scheduler(scraper: Scraper):
     # Schedule job every hour
     schedule.every(1).hour.do(metrics_job, scraper=scraper)
 
-    while True
+    while True:
+        schedule.run_pending()
+        time.sleep(60)
+
+if __name__ == '__main__':
+    scraper = Scraper(api_key=SCRAPFLY_API_KEY, profile_url=X_COM_PROFILE_URL)
+
+    # Start scheduler in a separate thread
+    scheduler_thread = threading.Thread(target=run_scheduler, args=(scraper,))
+    scheduler_thread.daemon = True
+    scheduler_thread.start()
+
+    # Start Flask web server to keep app alive
+    app = Flask(__name__)
+
+    @app.route('/')
+    def home():
+        return "X.com Metrics Scraper is running"
+
+    app.run(host='0.0.0.0', port=int(os.getenv('PORT', 10000)))
