@@ -14,7 +14,7 @@ class XScraper:
     def __init__(self, username: str):
         self.username = username
         self.base_url = "https://api.twitter.com/graphql"
-        self.query_id = "8IS8MaO-2EN6GZZZb8jF0g"
+        self.query_id = "QupGGFvwRkc-l5UHGIJh-w"
         self._refresh_headers()
 
     def _refresh_headers(self):
@@ -28,8 +28,9 @@ class XScraper:
             'x-guest-token': guest_token,
             'x-twitter-client-language': 'en',
             'x-twitter-active-user': 'yes',
-            'x-csrf-token': 'missing',
             'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'x-twitter-auth-type': 'OAuth2Session',
+            'x-csrf-token': 'missing',
             'accept': '*/*',
             'accept-language': 'en-US,en;q=0.9',
             'content-type': 'application/json',
@@ -58,11 +59,10 @@ class XScraper:
             variables = {
                 "screen_name": self.username,
                 "count": 40,
-                "withHighlightedLabel": True,
-                "withTweetQuoteCount": True,
+                "cursor": None,
                 "includePromotedContent": False,
-                "withQuickPromoteEligibilityTweetFields": True,
-                "withBirdwatchNotes": False,
+                "withSuperFollowsUserFields": True,
+                "withBirdwatchPivots": False,
                 "withVoice": True,
                 "withV2Timeline": True
             }
@@ -86,15 +86,24 @@ class XScraper:
                 "responsive_web_twitter_article_notes_tab_enabled": True,
                 "interactive_text_enabled": True,
                 "responsive_web_text_conversations_enabled": False,
+                "longform_notetweets_rich_text_read_enabled": True,
                 "responsive_web_enhance_cards_enabled": False,
-                "responsive_web_media_download_video_enabled": False,
-                "highlights_tweets_tab_ui_enabled": True,
+                "super_follow_badge_privacy_enabled": True,
+                "super_follow_exclusive_tweet_notifications_enabled": True,
+                "super_follow_tweet_api_enabled": True,
+                "super_follow_user_api_enabled": True,
+                "blue_business_profile_image_shape_enabled": True,
+                "creator_subscriptions_subscription_count_enabled": True,
                 "creator_subscriptions_tweet_preview_api_enabled": True,
-                "responsive_web_graphql_skip_user_profile_image_extensions_webp_enabled": False,
-                "hidden_profile_likes_enabled": True, 
-                "hidden_profile_subscriptions_enabled": True,
+                "subscriptions_verification_info_enabled": True,
                 "subscriptions_verification_info_verified_since_enabled": True,
-                "subscriptions_verification_info_is_identity_verified_enabled": True
+                "highlights_tweets_tab_ui_enabled": True,
+                "android_graphql_skip_api_media_color_palette": True,
+                "unified_cards_ad_metadata_container_dynamic_card_content_query_enabled": True,
+                "hidden_profile_likes_enabled": True,
+                "hidden_profile_subscriptions_enabled": True,
+                "responsive_web_graphql_skip_user_profile_image_extensions_webp_enabled": True,
+                "responsive_web_media_download_video_enabled": False
             }
             
             params = {
@@ -146,7 +155,8 @@ class XScraper:
                             'reply_count': legacy['reply_count'],
                             'like_count': legacy['favorite_count'],
                             'quote_count': legacy.get('quote_count', 0),
-                            'view_count': result.get('views', {}).get('count', 0)
+                            'view_count': result.get('views', {}).get('count', 0),
+                            'bookmark_count': legacy.get('bookmark_count', 0)
                         }
                     })
                 except Exception as e:
