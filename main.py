@@ -45,7 +45,6 @@ class Scraper:
 
             if response.status_code == 200:
                 logger.info("Scraping successful!")
-                logger.debug(f"Scraped HTML: {response.text[:1000]}")  # Log first 1000 characters of HTML
                 return response.text
             else:
                 logger.error(f"Scraping failed: {response.status_code} - {response.text}")
@@ -61,18 +60,16 @@ class Scraper:
         posts = []
 
         try:
-            logger.debug(f"Scraped HTML snippet: {soup.prettify()[:1000]}")  # Log structure for debugging
-
-            # Replace 'specific-class-for-posts' with the correct class name
-            post_elements = soup.find_all('div', class_='specific-class-for-posts')
+            # DEBUG: Send the full HTML to Discord if posts aren't found
+            post_elements = soup.find_all('div', class_='specific-class-for-posts')  # Update with actual class
             if not post_elements:
                 logger.warning("No posts found. Sending HTML snippet to Discord for debugging.")
-                requests.post(DISCORD_WEBHOOK_URL, json={"content": f"Scraped HTML snippet:\n{html[:2000]}"})
+                requests.post(DISCORD_WEBHOOK_URL, json={"content": f"HTML snippet:\n{html[:2000]}"})  # Send HTML
                 return []
 
             for post in post_elements:
                 content = post.get_text(strip=True)
-                impressions = post.get('data-impressions', 0)  # Update these as per actual attributes
+                impressions = post.get('data-impressions', 0)
                 engagements = post.get('data-engagements', 0)
 
                 posts.append({
