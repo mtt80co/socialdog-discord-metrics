@@ -45,7 +45,8 @@ class Scraper:
 
             if response.status_code == 200:
                 logger.info("Scraping successful!")
-                logger.debug(f"Scraper raw response: {response.text}")
+                # Log full response for debugging
+                logger.info(f"Raw response JSON: {json.dumps(response.json(), indent=2)}")
                 return response.json()
             else:
                 logger.error(f"Scraping failed: {response.status_code} - {response.text}")
@@ -61,7 +62,7 @@ class Scraper:
     def extract_posts(self, data: Dict) -> List[Dict]:
         """Extract all posts with detailed analytics."""
         try:
-            # Replace 'posts' with the actual key in the JSON response
+            # Adjust the key here based on the actual JSON structure
             posts_data = data.get('posts', [])
             if not posts_data:
                 logger.warning("No posts found in scraped data")
