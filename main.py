@@ -27,7 +27,7 @@ class Scraper:
         self.profile_url = profile_url
 
     def scrape_profile(self) -> str:
-        """Scrape the X.com profile page to extract all post data."""
+        """Scrape the X.com profile page to extract HTML."""
         try:
             headers = {
                 'Authorization': f'Bearer {self.api_key}',
@@ -60,13 +60,24 @@ class Scraper:
         posts = []
 
         try:
-            # Example structure: Replace '.post-class' with actual HTML structure
-            post_elements = soup.find_all('div', class_='post-class')  # Adjust based on actual structure
+            # Debugging: Log the HTML structure for review
+            logger.debug(f"Scraped HTML snippet: {soup.prettify()[:500]}")
+
+            # Adjust this logic to match the actual structure of X.com posts
+            post_elements = soup.find_all('div', class_='post')  # Replace 'post' with the correct class
+            if not post_elements:
+                logger.warning("No posts found in the HTML. Check HTML structure or scraper settings.")
+            
             for post in post_elements:
+                content = post.get_text(strip=True)
+                # Replace these with actual attribute extraction logic
+                impressions = post.get('data-impressions', 0)
+                engagements = post.get('data-engagements', 0)
+
                 posts.append({
-                    'content': post.get_text(strip=True),
-                    'impressions': post.get('data-impressions', 0),
-                    'engagements': post.get('data-engagements', 0),
+                    'content': content,
+                    'impressions': impressions,
+                    'engagements': engagements,
                 })
 
             logger.info(f"Extracted {len(posts)} posts.")
