@@ -35,14 +35,24 @@ class Scraper:
                 'render_js': 'true',
                 'wait_for': '15s',
                 'country_code': 'US',
+                'asp': True  # Enable anti-scraping protection
             }
 
             logger.info("Attempting to scrape X.com profile...")
             response = requests.get('https://api.scrapfly.io/scrape', headers=headers, params=params, timeout=60)
 
             if response.status_code == 200:
-                logger.info("Scraping successful!")
-                return response.text
+                try:
+                    json_response = response.json()
+                    if 'result' in json_response and 'content' in json_response['result']:
+                        logger.info("Successfully extracted HTML from JSON response")
+                        return json_response['result']['content']
+                    else:
+                        logger.error("Missing content in Scrapfly response")
+                        return ""
+                except json.JSONDecodeError as e:
+                    logger.error(f"Failed to parse JSON response: {e}")
+                    return ""
             else:
                 logger.error(f"Scraping failed: {response.status_code} - {response.text}")
                 return ""
@@ -56,30 +66,37 @@ class Scraper:
         posts = []
 
         try:
-            article_elements = soup.select('article[data-testid="tweet"]')
-            
+            # Try different selectors that X.com might use
+            article_elements = soup.select('article[data-testid="tweet"]') or \
+                             soup.select('[data-testid="cellInnerDiv"]') or \
+                             soup.select('[data-testid="tweetText"]').parent.parent.parent
+
             if not article_elements:
-                logger.warning("No posts found. Sending full HTML to Discord for debugging.")
+                logger.warning("No posts found. Sending debug info to Discord...")
+                soup_text = soup.get_text()[:1000]  # Get first 1000 chars of text content
                 requests.post(DISCORD_WEBHOOK_URL, json={
-                    "content": f"DEBUG: No posts found. HTML length: {len(html)} chars. First 500 chars:\n```\n{html[:500]}\n```"
+                    "content": f"DEBUG: Parsed content preview:\n```\n{soup_text}\n```"
                 })
                 return []
 
             for article in article_elements:
                 # Extract post content
-                text_element = article.select_one('div[data-testid="tweetText"]')
+                text_element = article.select_one('[data-testid="tweetText"]') or \
+                             article.select_one('[lang]') or \
+                             article.select_one('div[dir="auto"]')
+                             
                 content = text_element.get_text(strip=True) if text_element else "No content"
 
-                # Extract metrics
+                # Extract metrics with multiple possible selectors
                 metrics = {
-                    'likes': self._extract_metric(article, 'like'),
-                    'retweets': self._extract_metric(article, 'retweet'),
-                    'replies': self._extract_metric(article, 'reply'),
+                    'likes': self._extract_metric(article, ['like', 'unlike']),
+                    'retweets': self._extract_metric(article, ['retweet']),
+                    'replies': self._extract_metric(article, ['reply']),
                     'views': self._extract_views(article),
                 }
 
                 # Extract timestamp
-                timestamp = article.select_one('time')
+                timestamp = article.select_one('time') or article.select_one('[datetime]')
                 posted_at = timestamp['datetime'] if timestamp else None
 
                 # Extract post URL
@@ -93,6 +110,8 @@ class Scraper:
                     'url': post_url
                 })
 
+                logger.info(f"Extracted post: {content[:50]}...")
+
             logger.info(f"Extracted {len(posts)} posts with metrics.")
             return posts
 
@@ -100,19 +119,24 @@ class Scraper:
             logger.error(f"Error extracting posts: {e}")
             return []
 
-    def _extract_metric(self, article, metric_type):
-        try:
-            metric_element = article.select_one(f'div[data-testid="{metric_type}"]')
-            if metric_element:
-                value = metric_element.get_text(strip=True)
-                return self._parse_metric_value(value)
-            return 0
-        except Exception:
-            return 0
+    def _extract_metric(self, article, metric_types):
+        for metric_type in metric_types:
+            try:
+                # Try different possible selectors for metrics
+                metric_element = article.select_one(f'[data-testid="{metric_type}"]') or \
+                               article.select_one(f'[aria-label*="{metric_type}"]')
+                if metric_element:
+                    value = metric_element.get_text(strip=True)
+                    return self._parse_metric_value(value)
+            except Exception as e:
+                logger.debug(f"Failed to extract {metric_type}: {e}")
+        return 0
 
     def _extract_views(self, article):
         try:
-            views_element = article.select_one('a[href*="/analytics"]')
+            # Try different possible selectors for views
+            views_element = article.select_one('a[href*="/analytics"]') or \
+                          article.select_one('[aria-label*="view"]')
             if views_element:
                 value = views_element.get_text(strip=True)
                 return self._parse_metric_value(value)
@@ -122,75 +146,15 @@ class Scraper:
 
     def _parse_metric_value(self, value):
         try:
-            if 'K' in value:
-                return int(float(value.replace('K', '')) * 1000)
-            elif 'M' in value:
-                return int(float(value.replace('M', '')) * 1000000)
-            return int(value) if value else 0
+            if not value:
+                return 0
+            value = value.lower().replace(',', '')
+            if 'k' in value:
+                return int(float(value.replace('k', '')) * 1000)
+            elif 'm' in value:
+                return int(float(value.replace('m', '')) * 1000000)
+            return int(''.join(filter(str.isdigit, value))) if value else 0
         except ValueError:
             return 0
 
-def send_to_discord(posts):
-    if not posts:
-        logger.warning("No posts to send")
-        return
-
-    for post in posts:
-        try:
-            message = {
-                'embeds': [{
-                    'title': 'Post Metrics',
-                    'url': post['url'],
-                    'description': post['content'],
-                    'fields': [
-                        {'name': 'Likes', 'value': str(post['metrics']['likes']), 'inline': True},
-                        {'name': 'Retweets', 'value': str(post['metrics']['retweets']), 'inline': True},
-                        {'name': 'Replies', 'value': str(post['metrics']['replies']), 'inline': True},
-                        {'name': 'Views', 'value': str(post['metrics']['views']), 'inline': True},
-                    ],
-                    'timestamp': post['posted_at']
-                }]
-            }
-
-            response = requests.post(DISCORD_WEBHOOK_URL, json=message)
-
-            if response.status_code == 204:
-                logger.info("Successfully sent post metrics to Discord")
-            else:
-                logger.error(f"Discord webhook failed: {response.status_code} - {response.text}")
-
-        except requests.RequestException as e:
-            logger.error(f"Error sending to Discord: {e}")
-
-def metrics_job(scraper):
-    logger.info("Starting metrics collection job...")
-    html = scraper.scrape_profile()
-    if html:
-        posts = scraper.extract_posts(html)
-        send_to_discord(posts)
-    logger.info("Metrics job completed")
-
-def run_scheduler(scraper):
-    logger.info("Starting scheduler...")
-    metrics_job(scraper)
-
-    schedule.every(1).hour.do(metrics_job, scraper=scraper)
-
-    while True:
-        schedule.run_pending()
-        time.sleep(60)
-
-if __name__ == '__main__':
-    scraper = Scraper(api_key=SCRAPFLY_API_KEY, profile_url=X_COM_PROFILE_URL)
-
-    scheduler_thread = threading.Thread(target=run_scheduler, args=(scraper,))
-    scheduler_thread.daemon = True
-    scheduler_thread.start()
-
-    app = Flask(__name__)
-
-    @app.route('/')
-    def home():
-        return "X.com Metrics Scraper is running"
-
-    app.run(host='0.0.0.0', port=int(os.getenv('PORT', 10000)))
+# Rest of the code remains the same...
