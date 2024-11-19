@@ -6,17 +6,15 @@ import threading
 import time
 from flask import Flask
 from bs4 import BeautifulSoup
+import json
 
-# Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Load environment variables
 SCRAPFLY_API_KEY = os.getenv('SCRAPFLY_API_KEY')
 X_COM_PROFILE_URL = os.getenv('X_COM_PROFILE_URL', 'https://x.com/Meteo_Kingdom')
 DISCORD_WEBHOOK_URL = os.getenv('DISCORD_WEBHOOK_URL')
 
-# Validate environment variables
 if not all([SCRAPFLY_API_KEY, X_COM_PROFILE_URL, DISCORD_WEBHOOK_URL]):
     logger.error("Missing required environment variables")
     exit(1)
@@ -27,7 +25,6 @@ class Scraper:
         self.profile_url = profile_url
 
     def scrape_profile(self) -> str:
-        """Scrape the X.com profile page to extract HTML."""
         try:
             headers = {
                 'Authorization': f'Bearer {self.api_key}',
@@ -36,7 +33,7 @@ class Scraper:
             params = {
                 'url': self.profile_url,
                 'render_js': 'true',
-                'wait_for': '10s',  # Increased wait time
+                'wait_for': '15s',
                 'country_code': 'US',
             }
 
@@ -55,42 +52,85 @@ class Scraper:
             return ""
 
     def extract_posts(self, html: str):
-        """Extract all posts from the scraped HTML."""
         soup = BeautifulSoup(html, 'html.parser')
         posts = []
 
         try:
-            # Updated selectors to target X.com post elements
-            post_elements = soup.select('div[data-testid="cellInnerDiv"]')
+            article_elements = soup.select('article[data-testid="tweet"]')
             
-            if not post_elements:
+            if not article_elements:
                 logger.warning("No posts found. Sending full HTML to Discord for debugging.")
                 requests.post(DISCORD_WEBHOOK_URL, json={
                     "content": f"DEBUG: No posts found. HTML length: {len(html)} chars. First 500 chars:\n```\n{html[:500]}\n```"
                 })
                 return []
 
-            for post in post_elements:
-                # Extract text content
-                text_element = post.select_one('div[lang]')
+            for article in article_elements:
+                # Extract post content
+                text_element = article.select_one('div[data-testid="tweetText"]')
                 content = text_element.get_text(strip=True) if text_element else "No content"
 
-                # Try to extract engagement metrics (may require manual parsing)
+                # Extract metrics
+                metrics = {
+                    'likes': self._extract_metric(article, 'like'),
+                    'retweets': self._extract_metric(article, 'retweet'),
+                    'replies': self._extract_metric(article, 'reply'),
+                    'views': self._extract_views(article),
+                }
+
+                # Extract timestamp
+                timestamp = article.select_one('time')
+                posted_at = timestamp['datetime'] if timestamp else None
+
+                # Extract post URL
+                link_element = article.select_one('a[href*="/status/"]')
+                post_url = f"https://x.com{link_element['href']}" if link_element else None
+
                 posts.append({
                     'content': content,
-                    'impressions': 0,  # X.com may require additional parsing
-                    'engagements': 0,  # X.com may require additional parsing
+                    'metrics': metrics,
+                    'posted_at': posted_at,
+                    'url': post_url
                 })
 
-            logger.info(f"Extracted {len(posts)} posts.")
+            logger.info(f"Extracted {len(posts)} posts with metrics.")
             return posts
 
         except Exception as e:
             logger.error(f"Error extracting posts: {e}")
             return []
 
+    def _extract_metric(self, article, metric_type):
+        try:
+            metric_element = article.select_one(f'div[data-testid="{metric_type}"]')
+            if metric_element:
+                value = metric_element.get_text(strip=True)
+                return self._parse_metric_value(value)
+            return 0
+        except Exception:
+            return 0
+
+    def _extract_views(self, article):
+        try:
+            views_element = article.select_one('a[href*="/analytics"]')
+            if views_element:
+                value = views_element.get_text(strip=True)
+                return self._parse_metric_value(value)
+            return 0
+        except Exception:
+            return 0
+
+    def _parse_metric_value(self, value):
+        try:
+            if 'K' in value:
+                return int(float(value.replace('K', '')) * 1000)
+            elif 'M' in value:
+                return int(float(value.replace('M', '')) * 1000000)
+            return int(value) if value else 0
+        except ValueError:
+            return 0
+
 def send_to_discord(posts):
-    """Send all scraped posts to Discord webhook."""
     if not posts:
         logger.warning("No posts to send")
         return
@@ -98,14 +138,24 @@ def send_to_discord(posts):
     for post in posts:
         try:
             message = {
-                'content': f"📄 Post Content:\n```\n{post['content']}\n```"
+                'embeds': [{
+                    'title': 'Post Metrics',
+                    'url': post['url'],
+                    'description': post['content'],
+                    'fields': [
+                        {'name': 'Likes', 'value': str(post['metrics']['likes']), 'inline': True},
+                        {'name': 'Retweets', 'value': str(post['metrics']['retweets']), 'inline': True},
+                        {'name': 'Replies', 'value': str(post['metrics']['replies']), 'inline': True},
+                        {'name': 'Views', 'value': str(post['metrics']['views']), 'inline': True},
+                    ],
+                    'timestamp': post['posted_at']
+                }]
             }
 
-            logger.info("Sending post to Discord...")
             response = requests.post(DISCORD_WEBHOOK_URL, json=message)
 
             if response.status_code == 204:
-                logger.info("Successfully sent post to Discord")
+                logger.info("Successfully sent post metrics to Discord")
             else:
                 logger.error(f"Discord webhook failed: {response.status_code} - {response.text}")
 
@@ -113,7 +163,6 @@ def send_to_discord(posts):
             logger.error(f"Error sending to Discord: {e}")
 
 def metrics_job(scraper):
-    """Job to scrape all posts and send them to Discord."""
     logger.info("Starting metrics collection job...")
     html = scraper.scrape_profile()
     if html:
@@ -122,11 +171,9 @@ def metrics_job(scraper):
     logger.info("Metrics job completed")
 
 def run_scheduler(scraper):
-    """Run scheduler to periodically scrape all posts and send metrics."""
     logger.info("Starting scheduler...")
-    metrics_job(scraper)  # Execute the job immediately
+    metrics_job(scraper)
 
-    # Schedule job every hour
     schedule.every(1).hour.do(metrics_job, scraper=scraper)
 
     while True:
@@ -136,12 +183,10 @@ def run_scheduler(scraper):
 if __name__ == '__main__':
     scraper = Scraper(api_key=SCRAPFLY_API_KEY, profile_url=X_COM_PROFILE_URL)
 
-    # Start scheduler in a separate thread
     scheduler_thread = threading.Thread(target=run_scheduler, args=(scraper,))
     scheduler_thread.daemon = True
     scheduler_thread.start()
 
-    # Start Flask web server to keep app alive
     app = Flask(__name__)
 
     @app.route('/')
