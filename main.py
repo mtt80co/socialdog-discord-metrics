@@ -1,11 +1,9 @@
 import os
 import requests
-import json
 import logging
 import schedule
 import threading
 import time
-from typing import List, Dict, Optional
 from flask import Flask
 from bs4 import BeautifulSoup
 
@@ -28,7 +26,7 @@ class Scraper:
         self.api_key = api_key
         self.profile_url = profile_url
 
-    def scrape_profile(self) -> Optional[str]:
+    def scrape_profile(self) -> str:
         """Scrape the X.com profile page to extract all post data."""
         try:
             headers = {
@@ -38,7 +36,7 @@ class Scraper:
             params = {
                 'url': self.profile_url,
                 'render_js': 'true',
-                'wait_for': '5s',  # Allow time for JavaScript to load
+                'wait_for': '5s',
                 'country_code': 'US',
             }
 
@@ -47,30 +45,28 @@ class Scraper:
 
             if response.status_code == 200:
                 logger.info("Scraping successful!")
-                # Log response for debugging
-                logger.info(f"Response content: {response.text[:500]}...")
                 return response.text
             else:
                 logger.error(f"Scraping failed: {response.status_code} - {response.text}")
-                return None
+                return ""
 
         except requests.RequestException as e:
             logger.error(f"Request error: {e}")
-            return None
+            return ""
 
-    def extract_posts(self, html: str) -> List[Dict]:
+    def extract_posts(self, html: str):
         """Extract all posts from the scraped HTML."""
         soup = BeautifulSoup(html, 'html.parser')
         posts = []
 
         try:
-            # Adjust selectors based on actual HTML structure
-            post_elements = soup.find_all('div', class_='post-class')  # Adjust the class name
+            # Example structure: Replace '.post-class' with actual HTML structure
+            post_elements = soup.find_all('div', class_='post-class')  # Adjust based on actual structure
             for post in post_elements:
                 posts.append({
                     'content': post.get_text(strip=True),
-                    'impressions': post.get('data-impressions', 0),  # Example of extracting metadata
-                    'engagements': post.get('data-engagements', 0),  # Example of extracting metadata
+                    'impressions': post.get('data-impressions', 0),
+                    'engagements': post.get('data-engagements', 0),
                 })
 
             logger.info(f"Extracted {len(posts)} posts.")
@@ -80,7 +76,7 @@ class Scraper:
             logger.error(f"Error extracting posts: {e}")
             return []
 
-def send_to_discord(posts: List[Dict]):
+def send_to_discord(posts):
     """Send all scraped posts to Discord webhook."""
     if not posts:
         logger.warning("No posts to send")
@@ -106,7 +102,7 @@ def send_to_discord(posts: List[Dict]):
         except requests.RequestException as e:
             logger.error(f"Error sending to Discord: {e}")
 
-def metrics_job(scraper: Scraper):
+def metrics_job(scraper):
     """Job to scrape all posts and send them to Discord."""
     logger.info("Starting metrics collection job...")
     html = scraper.scrape_profile()
@@ -115,11 +111,10 @@ def metrics_job(scraper: Scraper):
         send_to_discord(posts)
     logger.info("Metrics job completed")
 
-def run_scheduler(scraper: Scraper):
+def run_scheduler(scraper):
     """Run scheduler to periodically scrape all posts and send metrics."""
     logger.info("Starting scheduler...")
-    # Execute the job immediately
-    metrics_job(scraper)
+    metrics_job(scraper)  # Execute the job immediately
 
     # Schedule job every hour
     schedule.every(1).hour.do(metrics_job, scraper=scraper)
