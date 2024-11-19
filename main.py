@@ -2,11 +2,12 @@ import os
 import requests
 import json
 import logging
+import schedule
 import threading
 import time
 from typing import List, Dict, Optional
-import schedule
 from flask import Flask
+from bs4 import BeautifulSoup
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -27,7 +28,7 @@ class Scraper:
         self.api_key = api_key
         self.profile_url = profile_url
 
-    def scrape_profile(self) -> Optional[Dict]:
+    def scrape_profile(self) -> Optional[str]:
         """Scrape the X.com profile page to extract all post data."""
         try:
             headers = {
@@ -37,17 +38,18 @@ class Scraper:
             params = {
                 'url': self.profile_url,
                 'render_js': 'true',
+                'wait_for': '5s',  # Allow time for JavaScript to load
                 'country_code': 'US',
             }
 
             logger.info("Attempting to scrape X.com profile...")
-            response = requests.get('https://api.scrapfly.io/scrape', headers=headers, params=params)
+            response = requests.get('https://api.scrapfly.io/scrape', headers=headers, params=params, timeout=30)
 
             if response.status_code == 200:
                 logger.info("Scraping successful!")
-                # Log full response for debugging
-                logger.info(f"Raw response JSON: {json.dumps(response.json(), indent=2)}")
-                return response.json()
+                # Log response for debugging
+                logger.info(f"Response content: {response.text[:500]}...")
+                return response.text
             else:
                 logger.error(f"Scraping failed: {response.status_code} - {response.text}")
                 return None
@@ -55,33 +57,26 @@ class Scraper:
         except requests.RequestException as e:
             logger.error(f"Request error: {e}")
             return None
-        except json.JSONDecodeError as e:
-            logger.error(f"JSON parsing error: {e}")
-            return None
 
-    def extract_posts(self, data: Dict) -> List[Dict]:
-        """Extract all posts with detailed analytics."""
+    def extract_posts(self, html: str) -> List[Dict]:
+        """Extract all posts from the scraped HTML."""
+        soup = BeautifulSoup(html, 'html.parser')
+        posts = []
+
         try:
-            # Adjust the key here based on the actual JSON structure
-            posts_data = data.get('posts', [])
-            if not posts_data:
-                logger.warning("No posts found in scraped data")
-                return []
-
-            posts = []
-            for post in posts_data:
+            # Adjust selectors based on actual HTML structure
+            post_elements = soup.find_all('div', class_='post-class')  # Adjust the class name
+            for post in post_elements:
                 posts.append({
-                    'quote': post.get('quote', ''),
-                    'content': post.get('content', 'No content'),
-                    'impressions': post.get('impressions', 0),
-                    'engagements': post.get('engagements', 0),
-                    'detail_expands': post.get('detail_expands', 0),
-                    'new_followers': post.get('new_followers', 0),
-                    'profile_visits': post.get('profile_visits', 0),
+                    'content': post.get_text(strip=True),
+                    'impressions': post.get('data-impressions', 0),  # Example of extracting metadata
+                    'engagements': post.get('data-engagements', 0),  # Example of extracting metadata
                 })
+
             logger.info(f"Extracted {len(posts)} posts.")
             return posts
-        except KeyError as e:
+
+        except Exception as e:
             logger.error(f"Error extracting posts: {e}")
             return []
 
@@ -95,13 +90,9 @@ def send_to_discord(posts: List[Dict]):
         try:
             message = {
                 'content': f"📄 Post Analytics:\n"
-                           f"• Quote: {post['quote']}\n"
                            f"• Content: {post['content']}\n"
-                           f"• Impressions: {post['impressions']}\n"
-                           f"• Engagements: {post['engagements']}\n"
-                           f"• Detail Expands: {post['detail_expands']}\n"
-                           f"• New Followers: {post['new_followers']}\n"
-                           f"• Profile Visits: {post['profile_visits']}"
+                           f"• Impressions: {post.get('impressions', 0)}\n"
+                           f"• Engagements: {post.get('engagements', 0)}"
             }
 
             logger.info("Sending post analytics to Discord...")
@@ -118,9 +109,9 @@ def send_to_discord(posts: List[Dict]):
 def metrics_job(scraper: Scraper):
     """Job to scrape all posts and send them to Discord."""
     logger.info("Starting metrics collection job...")
-    data = scraper.scrape_profile()
-    if data:
-        posts = scraper.extract_posts(data)
+    html = scraper.scrape_profile()
+    if html:
+        posts = scraper.extract_posts(html)
         send_to_discord(posts)
     logger.info("Metrics job completed")
 
