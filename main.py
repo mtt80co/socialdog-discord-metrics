@@ -18,25 +18,18 @@ class XScraper:
     def get_tweets(self):
         try:
             with sync_playwright() as p:
-                # Launch browser with required arguments
                 browser = p.chromium.launch(
                     headless=True,
                     args=['--no-sandbox', '--disable-dev-shm-usage']
                 )
-                
-                # Create new context and page
                 context = browser.new_context(viewport={'width': 1920, 'height': 1080})
                 page = context.new_page()
                 
-                # Navigate to Twitter profile
                 page.goto(f'https://twitter.com/{self.username}', wait_until='networkidle')
-                
-                # Wait for tweets to load
                 page.wait_for_selector('article[data-testid="tweet"]', timeout=30000)
                 tweets = page.query_selector_all('article[data-testid="tweet"]')
                 parsed_tweets = []
                 
-                # Parse each tweet
                 for tweet in tweets[:20]:
                     try:
                         text_element = tweet.query_selector('[data-testid="tweetText"]')
@@ -44,7 +37,6 @@ class XScraper:
                         
                         metrics = {'retweet_count': 0, 'reply_count': 0, 'like_count': 0, 'quote_count': 0}
                         
-                        # Get metrics
                         for metric in ['retweet', 'reply', 'like']:
                             try:
                                 count = tweet.query_selector(f'[data-testid="{metric}-count"]')
@@ -53,7 +45,6 @@ class XScraper:
                             except Exception as e:
                                 logger.debug(f"Error getting {metric} count: {e}")
                                 
-                        # Get tweet metadata
                         time_element = tweet.query_selector('time')
                         link = time_element.evaluate('el => el.parentElement.href')
                         tweet_id = link.split('/')[-1]
@@ -141,10 +132,8 @@ def create_app():
             send_to_discord(webhook_url, tweets)
             logger.info("Metrics collection completed")
         
-        # Run job immediately
         job()
         
-        # Start scheduler in background thread
         scheduler_thread = threading.Thread(target=run_scheduler, args=(job,))
         scheduler_thread.daemon = True
         scheduler_thread.start()
